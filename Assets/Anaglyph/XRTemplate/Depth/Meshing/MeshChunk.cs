@@ -31,6 +31,7 @@ namespace Anaglyph.DepthKit.Meshing
 
 		private bool isPopulated = false;
 		public UnityEvent<Mesh> onMeshFirstPopulated = new();
+		public UnityEvent<Mesh> onMeshUpdated = new();
 
 		private void Awake()
 		{
@@ -112,6 +113,8 @@ namespace Anaglyph.DepthKit.Meshing
 
 				bool justPopulated = await NetMesher.CreateMesh(volumePiece, size, mapper.VoxelSize,
 					mesh, ctkn);
+
+				onMeshUpdated.Invoke(mesh);
 
 				if (justPopulated && !isPopulated)
 				{
