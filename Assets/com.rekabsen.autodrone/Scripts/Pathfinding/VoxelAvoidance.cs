@@ -32,6 +32,8 @@ namespace Rekabsen.AutoDrone
         [SerializeField] float lowVelocityTheshold = 0.1f;
         [SerializeField] float searchAreaCoefficient = 3f;
         [SerializeField] bool canDetonate = false;
+		[Tooltip("Draws pathfinding volume in-game")]
+		[SerializeField] private bool debugMesh = false; // Toggle for using GL drawing instead of Gizmos
         //[SerializeField] int pathDepthLimit = 64;
 
         private OctreeNode[] leafNodes;
@@ -48,7 +50,18 @@ namespace Rekabsen.AutoDrone
         private float timer = 0f;
         private int unStuckAttempts = 0;
 
-        private void Start()
+		private MaterialPropertyBlock propertyBlock;
+		private Material lineMaterial;
+		private Mesh wireCubeMesh;
+
+		private void Awake()
+		{
+			CreateLineMaterial();
+			wireCubeMesh = CreateWireCubeMesh();
+			propertyBlock = new MaterialPropertyBlock();
+		}
+
+		private void Start()
         {
             depth = farDepth;
             droneBody = droneBox.attachedRigidbody;
@@ -112,6 +125,13 @@ namespace Rekabsen.AutoDrone
             {
                 pathNodes.RemoveAt(0);
             }
+
+			// Draw cube mesh for debugging in-game
+			if (debugMesh)
+			{
+				DrawLeafsRuntime();
+				DrawPathRuntime();
+			}
         }
 
         private void AttemptFixPOI()
@@ -735,10 +755,99 @@ namespace Rekabsen.AutoDrone
             }
         }
 
-        // --- Nested Helper Classes ---
+		// -- In-build visual debugging tools --
 
-        // Octree node class holds bounds, cost values, and connection info.
-        private class OctreeNode
+		private void CreateLineMaterial()
+		{
+			if (lineMaterial) return;
+			Shader shader = Shader.Find("Hidden/Internal-Colored");
+			lineMaterial = new Material(shader);
+			lineMaterial.hideFlags = HideFlags.HideAndDontSave;
+			lineMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+			lineMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+			lineMaterial.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+			lineMaterial.SetInt("_ZWrite", 0);
+		}
+
+		private Mesh CreateWireCubeMesh()
+		{
+			Mesh mesh = new Mesh();
+
+			// Unit cube centered at origin
+			Vector3[] verts = new Vector3[]
+			{
+				new Vector3(-0.5f, -0.5f, -0.5f), // 0
+				new Vector3( 0.5f, -0.5f, -0.5f), // 1
+				new Vector3( 0.5f, -0.5f,  0.5f), // 2
+				new Vector3(-0.5f, -0.5f,  0.5f), // 3
+				new Vector3(-0.5f,  0.5f, -0.5f), // 4
+				new Vector3( 0.5f,  0.5f, -0.5f), // 5
+				new Vector3( 0.5f,  0.5f,  0.5f), // 6
+				new Vector3(-0.5f,  0.5f,  0.5f), // 7
+			};
+
+			int[] indices = new int[]
+			{
+				// Bottom
+				0,1, 1,2, 2,3, 3,0,
+				// Top
+				 4,5, 5,6, 6,7, 7,4,
+				// Verticals
+				0,4, 1,5, 2,6, 3,7
+			};
+
+			mesh.vertices = verts;
+			mesh.SetIndices(indices, MeshTopology.Lines, 0);
+			return mesh;
+		}
+
+		private void DrawLeafsRuntime()
+		{
+			if (leafNodes == null) return;
+
+			for (int i = 0; i < leafNodes.Length; i++)
+			{
+				if (leafNodes[i] == null) break;
+
+				float red = leafNodes[i].occlusion;
+				float blue = 1 - leafNodes[i].occlusion;
+				float alpha = Mathf.Max(Mathf.Sqrt(leafNodes[i].occlusion), 0.025f);
+
+				propertyBlock.SetColor("_Color", new Color(red, 0f, blue, alpha));
+
+				Matrix4x4 matrix = Matrix4x4.TRS(
+					leafNodes[i].bounds.center,
+					Quaternion.identity,
+					leafNodes[i].bounds.size
+				);
+
+				Graphics.DrawMesh(wireCubeMesh, matrix, lineMaterial, 0, null, 0, propertyBlock);
+			}
+		}
+
+		private void DrawPathRuntime()
+		{
+			if (pathNodes == null) return;
+
+			for (int i = 0; i < pathNodes.Count; i++)
+			{
+				if (pathNodes[i] == null) break;
+
+				propertyBlock.SetColor("_Color", new Color(1f, 1f, 0f, 1f));
+
+				Matrix4x4 matrix = Matrix4x4.TRS(
+					pathNodes[i].bounds.center,
+					Quaternion.identity,
+					pathNodes[i].bounds.size
+				);
+
+				Graphics.DrawMesh(wireCubeMesh, matrix, lineMaterial, 0, null, 0, propertyBlock);
+			}
+		}
+		// --- Nested Helper Classes ---
+
+		// Octree node class holds bounds, cost values, and connection info.
+		private class OctreeNode
         {
             public Bounds bounds;
             public float occlusion = -1f;
