@@ -15,7 +15,7 @@ using UnityEngine.UIElements;
 
 namespace Rekabsen.AutoDrone
 {
-    public class VoxelAvoidance : MonoBehaviour
+    public class VoxelAvoidanceRaytrace : MonoBehaviour
     {
         [SerializeField] private WarheadListener listener;
         [SerializeField] private Transform poi;
@@ -62,13 +62,6 @@ namespace Rekabsen.AutoDrone
 		private Material lineMaterial;
 		private Mesh wireCubeMesh;
 
-		private NativeArray<sbyte> cachedVolume;
-		private int3 cachedVolumeStart;
-		private int3 cachedVolumeSize;
-		private bool volumeCacheValid = false;
-
-		private EnvironmentMapper mapper => EnvironmentMapper.Instance;
-
 		private void Awake()
 		{
 			CreateLineMaterial();
@@ -93,11 +86,6 @@ namespace Rekabsen.AutoDrone
             {
                 Debug.LogWarning("VoxelAvoidance: No warhead listener assigned");
             }
-
-			if (mapper == null)
-			{
-				Debug.LogWarning("VoxelAvoidance: mapper never assgined, no EnvironmentMapper in scene");
-			}
 		}
 
         private void Update()
@@ -379,35 +367,6 @@ namespace Rekabsen.AutoDrone
             return path;
         }
 
-        //private bool LineOfSight(Vector3 a, Vector3 b, bool ignoreNearEnd = false, Collider colliderToIgnore = null)
-        //{
-        //    Vector3 direction = (a - b).normalized;
-        //    float distance = Vector3.Distance(a, b);
-
-        //    // If no collider to ignore is specified, use a single Raycast
-        //    if (colliderToIgnore == null && !ignoreNearEnd)
-        //    {
-        //        return !Physics.Raycast(b, direction, distance);
-        //    }
-
-        //    // Use RaycastAll to get all hits
-        //    RaycastHit[] hits = Physics.RaycastAll(b, direction, distance);
-
-        //    // Check each hit; if any hit is not the ignored collider, there's an obstruction
-        //    foreach (RaycastHit hit in hits)
-        //    {
-        //        if (colliderToIgnore != null && hit.collider.Equals(colliderToIgnore))
-        //        {
-        //            return false; // Obstruction found, ignoring the specified collider
-        //        }
-        //        if(ignoreNearEnd && Vector3.Distance(b, hit.collider.bounds.center) > 0.5f)
-        //        {
-        //            return false; // Obstruction near endpoint found, ignoring the specified collider
-        //        }
-        //    }
-        //    return true; // No obstructions found (other than the ignored collider, if hit)
-        //}
-
         private bool LineOfSight(Vector3 a, Vector3 b, bool ignoreNearEnd = false)
         {
             Vector3 direction = (a - b).normalized;
@@ -481,11 +440,6 @@ namespace Rekabsen.AutoDrone
 
             return successors;
         }
-
-        //private OctreeNode treeVoxelSearch(Vector3 point, OctreeNode currNode)
-        //{
-        //    //o(m) seach where 
-        //}
 
         private OctreeNode BruteVoxelSearch(Vector3 point, bool droneLineOfSight = false, bool clearVoxel = false, bool ignoreNear = false)
         {
@@ -561,28 +515,6 @@ namespace Rekabsen.AutoDrone
             for (int i = 0; i < children.Length; i++)
             {
                 children[i] = new OctreeNode(subBounds[i], parent);
-
-				//Calcualte bounds occulusion
-				if (mapper != null)
-				{
-					//Query analgraph voxel volume for occlusion calculation
-					//Debug.Log("Using analgraph-based occlusion calculation");
-					//children[i].occlusion = SampleFillFromCache(children[i].bounds);
-					//children[i].occlusion = SampleFillFromCache(children[i].bounds);
-					//Debug.Log("VoxelAvoidance: occlusion " +  children[i].occlusion);
-				}
-				else
-				{
-					//Query bounding boxes
-					//Debug.Log("Using bound box-based occlusion calculation");
-					children[i].colliders = FilterBox(parent.colliders, children[i].bounds);
-					children[i].occlusion = CalculateOcclusion(children[i].colliders, children[i].bounds); //Removed because lasertag doesnt have many bounding boxes
-				}
-
-				//children[i].colliders = FilterBox(parent.colliders, children[i].bounds);
-				//children[i].occlusion = CalculateOcclusion(children[i].colliders, children[i].bounds); //Removed because lasertag doesnt have many bounding boxes
-
-
 				children[i].occlusionCostCoefficient = occlusionCostCoefficient;
                 children[i].occlusionCostFloor = occlusionCostFloor;
                 children[i].occlusionTolerance = occlusionTolerance;
@@ -594,134 +526,6 @@ namespace Rekabsen.AutoDrone
             {
                 GenerateeOctree(divCount - 1, children[i]);
             }
-        }
-
-		private async Task FetchVolumeCache(Bounds rootBounds, CancellationToken ctkn)
-		{
-			if (mapper == null) return;
-
-			int3 start = WorldToVoxel(rootBounds.min);
-			int3 end = WorldToVoxel(rootBounds.max);
-
-			start = math.clamp(start, 0, mapper.VoxelCount - 1);
-			end = math.clamp(end, 0, mapper.VoxelCount - 1);
-			int3 size = end - start;
-
-			if (size.x <= 0 || size.y <= 0 || size.z <= 0) return;
-
-			AsyncGPUReadbackRequest req = await AsyncGPUReadback.RequestAsync(
-				mapper.Volume, 0,
-				start.x, size.x,
-				start.y, size.y,
-				start.z, size.z);
-
-			if (req.hasError) throw new Exception("GPU readback error");
-			ctkn.ThrowIfCancellationRequested();
-
-			if (cachedVolume.IsCreated) cachedVolume.Dispose();
-
-			int total = size.x * size.y * size.z;
-			cachedVolume = new NativeArray<sbyte>(total, Allocator.Persistent);
-
-			for (int z = 0; z < size.z; z++)
-			{
-				NativeArray<sbyte> slice = req.GetData<sbyte>(z);
-				int dstOffset = z * size.x * size.y;
-				for (int i = 0; i < slice.Length; i++)
-					cachedVolume[dstOffset + i] = slice[i];
-			}
-
-			cachedVolumeStart = start;
-			cachedVolumeSize = size;
-			volumeCacheValid = true;
-		}
-
-		private float SampleFillFromCache(Bounds worldBounds)
-		{
-			if (!volumeCacheValid || !cachedVolume.IsCreated) return 0f;
-
-			int3 start = WorldToVoxel(worldBounds.min);
-			int3 end = WorldToVoxel(worldBounds.max);
-
-			// Clamp to cached region
-			start = math.max(start, cachedVolumeStart);
-			end = math.min(end, cachedVolumeStart + cachedVolumeSize);
-			int3 size = end - start;
-
-			if (size.x <= 0 || size.y <= 0 || size.z <= 0) return 0f;
-
-			int total = 0, filled = 0;
-
-			for (int z = start.z; z < end.z; z++)
-				for (int y = start.y; y < end.y; y++)
-					for (int x = start.x; x < end.x; x++)
-					{
-						int3 local = new int3(x, y, z) - cachedVolumeStart;
-						int idx = local.z * cachedVolumeSize.x * cachedVolumeSize.y
-								+ local.y * cachedVolumeSize.x
-								+ local.x;
-
-						if (idx < 0 || idx >= cachedVolume.Length) continue;
-
-						total++;
-						if (cachedVolume[idx] < 0) filled++;
-					}
-
-			return total == 0 ? 0f : (float)filled / total;
-		}
-
-		private int3 WorldToVoxel(float3 pos)
-		{
-			pos = WorldToVoxelFloat(pos);
-
-			int3 id = new(math.floor(pos));
-			id = math.clamp(id, 0, mapper.VoxelCount);
-			return id;
-		}
-
-		private float3 WorldToVoxelFloat(float3 pos)
-		{
-			pos /= mapper.VoxelSize;
-			pos += (float3)mapper.VoxelCount / 2.0f;
-			return pos;
-		}
-
-		private Collider[] FilterBox(Collider[] parentColliders, Bounds bounds)
-        {
-            //loop through all colliders and check for occlusion
-            List<Collider> overlapping = new List<Collider>();
-            foreach (Collider collider in parentColliders)
-            {
-                if (bounds.Intersects(collider.bounds))
-                {
-                    overlapping.Add(collider);
-                }
-            }
-
-            return overlapping.ToArray();
-        }
-
-        private float CalculateOcclusion(Collider[] colliders, Bounds bounds)
-        {
-            //calculat how much of a bound's volume is occluded by colliders within it
-            float boundsVolume = (bounds.extents * 2f).x * (bounds.extents * 2f).y * (bounds.extents * 2f).z;
-            float occludedVolume = 0f;
-            foreach (Collider collider in colliders)
-            {
-                occludedVolume += IntersectVolume(bounds, collider.bounds);
-            }
-
-            return occludedVolume / boundsVolume;
-        }
-
-        private float IntersectVolume(Bounds a, Bounds b) //assumes they intersect
-        {
-            // Get min/max of intersection
-            Vector3 min = Vector3.Max(a.min, b.min);
-            Vector3 max = Vector3.Min(a.max, b.max);
-
-            // Volume = width * height * depth
-            return (max.x - min.x) * (max.y - min.y) * (max.z - min.z);
         }
 
         private Bounds[] SubdivideBounds(Bounds bound)
@@ -816,11 +620,6 @@ namespace Rekabsen.AutoDrone
         {
             GameObject explosion = Instantiate(explosionPrefab, droneBody.position, Quaternion.identity);
         }
-
-		private void OnDestroy()
-		{
-			if (cachedVolume.IsCreated) cachedVolume.Dispose();
-		}
 
 		private void OnDrawGizmos()
         {
