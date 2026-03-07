@@ -236,7 +236,6 @@ GameObject:
   m_Component:
   - component: {fileID: 9104708620743691876}
   - component: {fileID: -6273684118396164631}
-  - component: {fileID: 5575007742983800896}
   m_Layer: 0
   m_Name: NPC_Drone_Raycast
   m_TagString: Untagged
@@ -278,7 +277,7 @@ MonoBehaviour:
   poiRange: 2
   layerMask:
     serializedVersion: 2
-    m_Bits: 0
+    m_Bits: 64
   explosionPrefab: {fileID: 1630013902200684340, guid: 5cc73a025fda6f342bd9fd849a5e6d63, type: 3}
   target: {fileID: 6890869002930954005}
   drone: {fileID: 1757541506572045032}
@@ -286,33 +285,20 @@ MonoBehaviour:
   closeDepth: 4
   maxLoopDepth: 32
   showGizmo: 0
-  proximalDist: 5
+  proximalDist: 10
   superProximalDist: 0.5
   occlusionCostCoefficient: 12
   occlusionCostFloor: 0
   occlusionTolerance: 0
   rayCost: 24
-  proximalTick: 9999
-  distalTick: 2.5
+  proximalTick: 5
+  distalTick: 20
+  unstuckTick: 5
   lowVelocityTheshold: 0.1
-  searchAreaCoefficient: 3
+  searchAreaCoefficient: 1.5
   canDetonate: 0
   debugMesh: 1
   droneBox: {fileID: 4582305102641892156}
---- !u!114 &5575007742983800896
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 262432743607595629}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 676754d79233e4746a4502fdcaca92b3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  health: 1
-  voxelAvoidance: {fileID: 0}
 --- !u!1 &304600988340691115
 GameObject:
   m_ObjectHideFlags: 0

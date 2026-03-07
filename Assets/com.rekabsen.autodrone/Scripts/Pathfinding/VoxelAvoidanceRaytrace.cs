@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Anaglyph.XRTemplate;
@@ -20,7 +21,7 @@ namespace Rekabsen.AutoDrone
         [SerializeField] private WarheadListener listener;
         [SerializeField] private Transform poi;
         [SerializeField] private float poiRange = 2f;
-        [SerializeField] private LayerMask layerMask;
+        [SerializeField] private LayerMask layerMask = Physics.AllLayers;
         [SerializeField] private GameObject explosionPrefab;
         [SerializeField] private Transform target;
         [SerializeField] private Transform drone;
@@ -37,6 +38,7 @@ namespace Rekabsen.AutoDrone
         [SerializeField] float rayCost = 10f;
         [SerializeField] float proximalTick = 2.5f;
         [SerializeField] float distalTick = 15f;
+        [SerializeField] float unstuckTick = 5f;
         [SerializeField] float lowVelocityTheshold = 0.1f;
         [SerializeField] float searchAreaCoefficient = 3f;
         [SerializeField] bool canDetonate = false;
@@ -56,6 +58,7 @@ namespace Rekabsen.AutoDrone
         private bool sighted = false;
         private bool detonated = false;
         private float timer = 0f;
+        private float unstuckTimer = 0f;
         private int unStuckAttempts = 0;
 
 		private MaterialPropertyBlock propertyBlock;
@@ -181,17 +184,19 @@ namespace Rekabsen.AutoDrone
             //"stuck" cooldown
             if (droneBody.linearVelocity.magnitude < lowVelocityTheshold)
             {
-                if (unStuckAttempts > 5)
+				unstuckTimer += Time.deltaTime;
+
+				if (unStuckAttempts > 5)
                 {
                     detonated = true; //hard coded limit for unstuck attempts is 5
                 }
-                if (timer > distalTick)
+                if (unstuckTimer > unstuckTick)
                 {
-                    unStuckAttempts++;
-                    leafNodes = null;
-                    pathNodes = null;
-                    timer = 0f;
-                }
+
+					unStuckAttempts++;
+					unstuckTimer = 0f;
+
+				}
 
                 sighted = false;
             }
@@ -206,10 +211,10 @@ namespace Rekabsen.AutoDrone
             //recalculate once quite close
             if (!proximal && Vector3.Distance(drone.position, poi.position) < proximalDist)
             {
-                depth = closeDepth;
-                leafNodes = null;
-                pathNodes = null;
-                proximal = true;
+				depth = closeDepth;
+				leafNodes = null;
+				pathNodes = null;
+				proximal = true;
                 timer = 0f;
             }
 
@@ -217,9 +222,9 @@ namespace Rekabsen.AutoDrone
             if (proximal && Vector3.Distance(drone.position, poi.position) > proximalDist)
             {
                 depth = farDepth;
-                leafNodes = null;
-                pathNodes = null;
-                proximal = false;
+				leafNodes = null;
+				pathNodes = null;
+				proximal = false;
                 timer = 0f;
             }
         }
@@ -251,7 +256,8 @@ namespace Rekabsen.AutoDrone
                 float distalCoef = leafNodes[0].bounds.extents.x;
                 if ((proximal && timer > proximalTick) || (!proximal && timer > distalTick * distalCoef))
                 {
-                    leafNodes = null;
+					Debug.Log("Periodic path recalculation");
+					leafNodes = null;
                     pathNodes = null;
                     timer = 0f;
                 }
@@ -380,7 +386,6 @@ namespace Rekabsen.AutoDrone
                 }
                 if (ignoreNearEnd && Vector3.Distance(b, hit.point) > poiRange)
                 {
-                    Debug.Log("Line Of sight failed at " + hit.collider.gameObject.name, hit.collider.gameObject);
                     return false; // Obstruction near endpoint found, ignoring the specified collider
                 }
             }
@@ -515,6 +520,7 @@ namespace Rekabsen.AutoDrone
             for (int i = 0; i < children.Length; i++)
             {
                 children[i] = new OctreeNode(subBounds[i], parent);
+				children[i].occlusion = CalculateOcclusion(children[i]);
 				children[i].occlusionCostCoefficient = occlusionCostCoefficient;
                 children[i].occlusionCostFloor = occlusionCostFloor;
                 children[i].occlusionTolerance = occlusionTolerance;
@@ -528,7 +534,39 @@ namespace Rekabsen.AutoDrone
             }
         }
 
-        private Bounds[] SubdivideBounds(Bounds bound)
+		private float CalculateOcclusion(OctreeNode node)
+		{
+			// Cast rays from the center of the node to the corners of its bounds
+			Vector3 center = node.bounds.center;
+			Vector3 extents = node.bounds.extents;
+
+			// Define the 8 corners of the bounds
+			Vector3[] corners = new Vector3[]
+			{
+				center + new Vector3(-extents.x, -extents.y, -extents.z),
+				center + new Vector3(extents.x, -extents.y, -extents.z),
+				center + new Vector3(-extents.x, extents.y, -extents.z),
+				center + new Vector3(extents.x, extents.y, -extents.z),
+				center + new Vector3(-extents.x, -extents.y, extents.z),
+				center + new Vector3(extents.x, -extents.y, extents.z),
+				center + new Vector3(-extents.x, extents.y, extents.z),
+				center + new Vector3(extents.x, extents.y, extents.z)
+			};
+
+			int occludedRays = 0;
+			foreach (Vector3 corner in corners)
+			{
+				if (!LineOfSight(center, corner))
+				{
+					occludedRays++;
+				}
+			}
+
+			return (float)occludedRays / (float)corners.Length;
+		}
+
+
+		private Bounds[] SubdivideBounds(Bounds bound)
         {
             //octree array
             Bounds[] octBounds = new Bounds[8];
@@ -561,8 +599,8 @@ namespace Rekabsen.AutoDrone
         private int PopulateLeafNodes(OctreeNode node, int drawIndex) //i <3 recursion
         {
             Debug.Assert(node != null);
-            //leaf base case
-            if (node.children == null)
+			//leaf base case
+			if (node.children == null)
             {
                 //add to drawBounds array
                 leafNodes[drawIndex] = node;
