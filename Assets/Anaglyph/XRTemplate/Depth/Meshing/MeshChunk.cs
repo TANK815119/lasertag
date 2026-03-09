@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Anaglyph.XRTemplate;
+using Meshia.MeshSimplification;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -9,11 +10,12 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.Rendering;
+using UnityEngine.Serialization;
 
 namespace Anaglyph.DepthKit.Meshing
 {
 	// mesh & chunk origin are at bottom back left origin and extend along positive axiis
-	public class MeshChunk : MonoBehaviour
+	public class MeshChunk : MonoBehaviour, IDisposable
 	{
 #if UNITY_EDITOR
 		[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -28,14 +30,40 @@ namespace Anaglyph.DepthKit.Meshing
 
 		private Mesh mesh;
 		public bool dirty;
+		private NativeArray<sbyte> volume;
 
 		private bool isPopulated = false;
-		public UnityEvent<Mesh> onMeshFirstPopulated = new();
+		public bool IsPopulated => isPopulated;
+
+		[FormerlySerializedAs("onMeshFirstPopulated")]
+		public UnityEvent<Mesh> onMeshPopulated = new();
+
+		private readonly NetMesher mesher = new();
+
+		[Header("Mesh decimation options")] public MeshSimplificationTarget decimationTarget = new()
+		{
+			Kind = MeshSimplificationTargetKind.ScaledTotalError,
+			Value = 0.5f
+		};
+
+		public MeshSimplifierOptions decimationOptions = new()
+		{
+			EnableSmartLink = false,
+			MinNormalDot = 0.8f,
+			PreserveBorderEdges = true,
+			PreserveSurfaceCurvature = false,
+			UseBarycentricCoordinateInterpolation = false,
+			VertexLinkDistance = 0.0001f,
+			VertexLinkMinNormalDot = 0.95f,
+			VertexLinkColorDistance = 0.01f,
+			VertexLinkUvDistance = 0.001f
+		};
 		public UnityEvent<Mesh> onMeshUpdated = new();
 
 		private void Awake()
 		{
 			mesh = new Mesh();
+			mesh.MarkDynamic();
 		}
 
 		private void OnDestroy()
@@ -61,8 +89,6 @@ namespace Anaglyph.DepthKit.Meshing
 
 		public async Task Mesh(CancellationToken ctkn = default)
 		{
-			NativeArray<sbyte> volumePiece = default;
-
 			try
 			{
 				int3 start = WorldToVoxel(transform.position);
@@ -95,7 +121,13 @@ namespace Anaglyph.DepthKit.Meshing
 
 				int sliceSize = size.x * size.y;
 
-				volumePiece = new NativeArray<sbyte>(sliceSize * req.depth, Allocator.TempJob);
+				if (!volume.IsCreated || volume.Length < sliceSize * req.depth)
+				{
+					if (volume.IsCreated)
+						volume.Dispose();
+
+					volume = new NativeArray<sbyte>(sliceSize * req.depth, Allocator.Persistent);
+				}
 
 				for (int z = 0; z < size.z; z++)
 				{
@@ -105,28 +137,31 @@ namespace Anaglyph.DepthKit.Meshing
 					CopySliceJob copier = new()
 					{
 						Source = slice,
-						Destination = volumePiece,
+						Destination = volume,
 						DestOffset = dstOffset
 					};
 					copier.ScheduleParallelByRef(sliceSize, 16, default).Complete();
 				}
 
-				bool justPopulated = await NetMesher.CreateMesh(volumePiece, size, mapper.VoxelSize,
-					mesh, ctkn);
+				isPopulated = await mesher.CreateMesh(volume, size, mapper.VoxelSize, mesh, ctkn);
 
+				ctkn.ThrowIfCancellationRequested();
+
+				onMeshPopulated.Invoke(mesh);
+				mesh.MarkModified();
+				
 				onMeshUpdated.Invoke(mesh);
-
-				if (justPopulated && !isPopulated)
-				{
-					onMeshFirstPopulated.Invoke(mesh);
-					isPopulated = true;
-				}
 			}
 			finally
 			{
-				if (volumePiece.IsCreated) volumePiece.Dispose();
 				dirty = false;
 			}
+		}
+
+		public async Task Decimate(CancellationToken ctkn = default)
+		{
+			if (isPopulated)
+				await MeshSimplifier.SimplifyAsync(mesh, decimationTarget, decimationOptions, mesh, ctkn);
 		}
 
 		[BurstCompile]
@@ -152,5 +187,10 @@ namespace Anaglyph.DepthKit.Meshing
 			Gizmos.DrawWireCube(transform.position + areaHalf, extents);
 		}
 #endif
+		public void Dispose()
+		{
+			volume.Dispose();
+			mesher?.Dispose();
+		}
 	}
 }

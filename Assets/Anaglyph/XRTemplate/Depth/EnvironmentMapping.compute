@@ -1,7 +1,8 @@
 #include "../Depth/DepthKit.hlsl"
 #include "../Depth/EnvMapper.hlsl"
 
-RWTexture3D<float> volumeRW; // tsdf
+RWTexture3D<float> envVolumeRW; // tsdf
+float depthDispThresh;
 
 #define PLAYER_TOP 0.2
 #define PLAYER_BOTTOM 1.7
@@ -13,7 +14,7 @@ RWTexture3D<float> volumeRW; // tsdf
 [numthreads(4, 4, 4)]
 void Clear(uint3 id : SV_DispatchThreadID)
 {
-	volumeRW[id] = -1.0;
+	envVolumeRW[id] = EMPTY_VOXEL;
 }
 
 #pragma kernel Integrate
@@ -41,16 +42,18 @@ void Integrate(uint id : SV_DispatchThreadID)
 
 	float sDist = depthEyeDist - voxEyeDist;
 	sDist *= saturate(normDot);
-	// coord = coord + depthNorm * sDist;
 
 	bool empty = sDist >= 1.0;
 	float sDistNorm = min(sDist / envVoxDist, 1);
-	bool withinBand = sDistNorm >= -1.0;
+	bool withinBand = sDistNorm >= -envVoxMin / envVoxSize;
 
+	// TODO depth dilation test broken wtf
 	float dilatedDepthNDC = sampleDilatedDepth(voxNDC.xy);
 	float dilatedDepthLinear = agDepthNDCToLinear(dilatedDepthNDC);
+	float depthLinear = agDepthNDCToLinear(depthNDC);
 	float3 voxView = mul(agDepthView[0], float4(voxPos, 1)).xyz;
-	bool unmasked = abs(voxView.z) < dilatedDepthLinear + envVoxDist * 2;
+	bool acceptableDepthDisparity = depthLinear < dilatedDepthLinear + depthDispThresh;
+	bool unoccludedByDilation = abs(voxView.z) < dilatedDepthLinear || acceptableDepthDisparity;
 	bool validSurfaceNormal = empty || normDot > MIN_DOT;
 
 	bool outsidePlayers = true;
@@ -58,8 +61,8 @@ void Integrate(uint id : SV_DispatchThreadID)
 	{
 		float3 playerPos = envPlayerHeads[p];
 
-		float2 d = vWorldPos.xz - playerPos.xz;
-		if (dot(d, d) < PLAYER_RADIUS * PLAYER_RADIUS &&
+		float2 diff = vWorldPos.xz - playerPos.xz;
+		if (dot(diff, diff) < PLAYER_RADIUS * PLAYER_RADIUS &&
 			vWorldPos.y < playerPos.y + PLAYER_TOP &&
 			vWorldPos.y > playerPos.y - PLAYER_BOTTOM)
 		{
@@ -67,9 +70,9 @@ void Integrate(uint id : SV_DispatchThreadID)
 		}
 	}
 
-	bool valid = withinBand & outsidePlayers & validSurfaceNormal & unmasked;
+	bool valid = withinBand & outsidePlayers & validSurfaceNormal & unoccludedByDilation;
 	if (valid)
-		volumeRW[coord] = sDistNorm;
+		envVolumeRW[coord] = sDistNorm;
 }
 
 #pragma kernel InitDepthDilation
@@ -124,10 +127,11 @@ void DilateDepthStep(uint2 coord : SV_DispatchThreadID)
 		float4 srcVal = dilateSrc[srcCoord];
 
 		float srcDepthLinear = agDepthNDCToLinear(srcVal.z);
-		float pixelSize = 2.0 * abs(srcDepthLinear) / (focalLength * agDepthTexSize.x);
-		float radius = envVoxDist / pixelSize.x;
+		float pixelSize = 2.0 * srcDepthLinear / (focalLength * agDepthTexSize.x);
+		float radius = (envVoxDist + envVoxSize) / pixelSize.x;
 
-		bool withinRadius = distance(srcVal.xy, coord.xy) < radius;
+		float2 diff = srcVal.xy - coord.xy;
+		bool withinRadius = dot(diff, diff) < radius * radius;
 
 		bool newMinimum = srcVal.z < val.z;
 		bool notZero = srcVal.z != 0;
@@ -184,3 +188,25 @@ void Raymarch(uint3 id : SV_DispatchThreadID)
 
 	raymarchResults[id.x] = result;
 }
+
+// #pragma kernel CrossingTest
+//
+// RWStructuredBuffer<uint> crossingTestResult;
+// // Result[0] = hasPositive
+// // Result[1] = hasNegative
+//
+// uint3 crossingTestStart;
+//
+// [numthreads(8,8,8)]
+// void CrossingTest(uint3 id : SV_DispatchThreadID)
+// {
+// 	uint3 coord = id + crossingTestStart;
+//
+// 	float v = envVolume[coord];
+//
+// 	if (v > 0.0)
+// 		InterlockedOr(crossingTestResult[0], 1);
+//
+// 	if (v < 0.0)
+// 		InterlockedOr(crossingTestResult[1], 1);
+// }

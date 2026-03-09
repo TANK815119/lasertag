@@ -1,16 +1,28 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using Unity.Mathematics.Geometry;
 using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace Anaglyph.DepthKit
 {
-	public static class NetMesher
+	public class NetMesher : IDisposable
 	{
+		private NativeList<Vertex> verts;
+		private NativeList<int3> vertCoords;
+		private NativeArray<int> coordVertMap;
+		private NativeList<uint> tris;
+
+		private NativeReference<MinMaxAABB> boundsRef;
+
+		private bool isBusy = false;
+		public bool IsIsBusy => isBusy;
+
 		private static readonly byte[] CrnrOffsIdxA =
 		{
 			0, 1, 2, 3,
@@ -38,99 +50,13 @@ namespace Anaglyph.DepthKit
 			new(0, 1, 1)
 		};
 
+		private const int InvalidVertSentinel = -1;
+		private const float EmptyVoxel = -1.0f;
 		private const float sbyteMax = sbyte.MaxValue;
 
 		private static readonly int3 X = new(1, 0, 0);
 		private static readonly int3 Y = new(0, 1, 0);
 		private static readonly int3 Z = new(0, 0, 1);
-
-		public static async Task<bool> CreateMesh(
-			NativeArray<sbyte> volume, int3 volumeSize, float metersPerVoxel,
-			Mesh mesh, CancellationToken ctkn = default)
-		{
-			bool hasTriangles = false;
-
-			int vertCountEstimate = volume.Length / 3;
-			NativeList<Vertex> verts = new(vertCountEstimate, Allocator.TempJob);
-			NativeList<int3> vertCoords = new(vertCountEstimate, Allocator.TempJob);
-
-			NativeArray<uint> vertexIndices = new(volume.Length, Allocator.TempJob);
-
-			int triCountEstimate = vertCountEstimate * 6;
-			NativeList<uint> tris = new(triCountEstimate, Allocator.TempJob);
-
-			try
-			{
-				VertexJob vertexMaker = new()
-				{
-					Volume = volume,
-					VoxelCount = volumeSize,
-					VoxelSize = metersPerVoxel,
-
-					VertIndices = vertexIndices,
-					Verts = verts, //.AsParallelWriter(),
-					VertCoords = vertCoords //.AsParallelWriter()
-				};
-
-				JobHandle vertHandle = vertexMaker.Schedule(); // .ScheduleParallelByRef(volume.Length, 128, default);
-				while (!vertHandle.IsCompleted) await Task.Yield();
-
-				vertHandle.Complete();
-				ctkn.ThrowIfCancellationRequested();
-
-				IndexJob triMaker = new()
-				{
-					VertCoords = vertCoords.AsArray(),
-					VertIndices = vertexIndices,
-
-					Volume = volume,
-					VolumeSize = volumeSize,
-
-					Tris = tris //.AsParallelWriter()
-				};
-
-				JobHandle triHandle = triMaker.Schedule(); //.ScheduleParallelByRef(vertCoords.Length, 256, vertHandle);
-				while (!triHandle.IsCompleted) await Task.Yield();
-
-				triHandle.Complete();
-				ctkn.ThrowIfCancellationRequested();
-
-				ApplyToMesh(verts, tris, mesh);
-
-				hasTriangles = tris.Length > 0;
-			}
-			finally
-			{
-				vertexIndices.Dispose();
-				verts.Dispose();
-				vertCoords.Dispose();
-				tris.Dispose();
-			}
-
-			return hasTriangles;
-		}
-
-		private static void ApplyToMesh(NativeArray<Vertex> verts, NativeArray<uint> tris,
-			Mesh mesh)
-		{
-			const MeshUpdateFlags flags = MeshUpdateFlags.DontNotifyMeshUsers |
-			                              MeshUpdateFlags.DontRecalculateBounds |
-			                              MeshUpdateFlags.DontValidateIndices;
-
-			mesh.SetVertexBufferParams(verts.Length, Vertex.Layout);
-			mesh.SetVertexBufferData(verts, 0, 0, verts.Length, 0, flags);
-
-			mesh.SetIndexBufferParams(tris.Length, IndexFormat.UInt32);
-			mesh.SetIndexBufferData(tris, 0, 0, tris.Length, flags);
-
-			mesh.subMeshCount = 1;
-			SubMeshDescriptor smd = new(0, tris.Length);
-			mesh.SetSubMesh(0, smd);
-
-			// mesh.RecalculateNormals(flags);
-
-			mesh.RecalculateBounds();
-		}
 
 		[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 		public struct Vertex
@@ -155,26 +81,31 @@ namespace Anaglyph.DepthKit
 		private struct VertexJob : IJob
 		{
 			[ReadOnly] public NativeArray<sbyte> Volume;
-			[ReadOnly] public int3 VoxelCount;
-			[ReadOnly] public float VoxelSize;
+			[ReadOnly] public int3 VoxCount;
+			[ReadOnly] public float VoxSize;
 
-			[WriteOnly] public NativeArray<uint> VertIndices;
+			// maps coords as flat indices to vert indices 
+			[WriteOnly] public NativeArray<int> CoordVertMap;
 			public NativeList<Vertex> Verts;
 			public NativeList<int3> VertCoords;
 
+			public NativeReference<MinMaxAABB> BoundsRef;
+
 			public void Execute()
 			{
-				int voxelCount = VoxelCount.x * VoxelCount.y * VoxelCount.z;
+				int voxelCount = VoxCount.x * VoxCount.y * VoxCount.z;
+
+				MinMaxAABB bounds = new();
 
 				for (int i = 0; i < voxelCount; i++)
 				{
 					int3 coord = IndexToCoord(i);
 
-					if (coord.x == VoxelCount.x - 1 ||
-					    coord.y == VoxelCount.y - 1 ||
-					    coord.z == VoxelCount.z - 1)
+					if (coord.x == VoxCount.x - 1 ||
+					    coord.y == VoxCount.y - 1 ||
+					    coord.z == VoxCount.z - 1)
 					{
-						VertIndices[i] = uint.MaxValue;
+						CoordVertMap[i] = InvalidVertSentinel;
 						continue;
 					}
 
@@ -198,7 +129,7 @@ namespace Anaglyph.DepthKit
 						if (doesCross)
 						{
 							// cull false isosurface sign changes
-							if (valA == -1f || valB == -1f)
+							if (valA == EmptyVoxel || valB == EmptyVoxel)
 								numBadCrossings++;
 
 							float t = valA / change;
@@ -209,9 +140,9 @@ namespace Anaglyph.DepthKit
 						}
 					}
 
-					if (numCrossings == 0 || numCrossings == numBadCrossings)
+					if (numCrossings < 3 || numCrossings == numBadCrossings)
 					{
-						VertIndices[i] = uint.MaxValue;
+						CoordVertMap[i] = InvalidVertSentinel;
 						continue;
 					}
 
@@ -221,15 +152,19 @@ namespace Anaglyph.DepthKit
 
 					Vertex vert = new(pos, norm);
 
-					VertIndices[i] = (uint)Verts.Length;
+					bounds.Encapsulate(pos);
+
+					CoordVertMap[i] = Verts.Length;
 					Verts.Add(vert);
 					VertCoords.Add(coord);
 				}
+
+				BoundsRef.Value = bounds;
 			}
 
 			private int3 IndexToCoord(int i)
 			{
-				int3 s = VoxelCount;
+				int3 s = VoxCount;
 				return new int3(
 					i % s.x,
 					i / s.x % s.y,
@@ -239,122 +174,38 @@ namespace Anaglyph.DepthKit
 
 			private int CoordToIndex(int3 c)
 			{
-				int3 s = VoxelCount;
+				int3 s = VoxCount;
 				return c.x + c.y * s.x + c.z * s.x * s.y;
 			}
 
 			private float3 CoordToPos(float3 c)
 			{
-				return c * VoxelSize + VoxelSize * 0.5f;
+				return c * VoxSize + VoxSize * 0.5f;
 			}
 
 			private float ValueForCoord(int3 c)
 			{
-				return Volume[CoordToIndex(c)] / sbyteMax;
+				float val = Volume[CoordToIndex(c)] / sbyteMax;
+				if (val == EmptyVoxel) val = 0;
+				return val;
 			}
 		}
-
-		/*[BurstCompile]
-		private struct VertexJob : IJobFor
-		{
-			[ReadOnly] public NativeArray<sbyte> Volume;
-			[ReadOnly] public int3 VolumeSize;
-			[ReadOnly] public float MetersPerVoxel;
-
-			[WriteOnly] public NativeArray<uint> VertexIndices;
-			[WriteOnly] public NativeList<float3>.ParallelWriter Verts;
-			[WriteOnly] public NativeList<int3>.ParallelWriter VertCoords;
-
-			public unsafe void Execute(int threadIdx)
-			{
-				int3 coord = ThreadIndexToCoord(threadIdx);
-
-				if (coord.x == VolumeSize.x - 1 ||
-				    coord.y == VolumeSize.y - 1 ||
-				    coord.z == VolumeSize.z - 1)
-					return;
-
-				float3 posCoord = new();
-				byte numCrossings = 0;
-
-				for (int i = 0; i < 12; i++)
-				{
-					int3 coordA = coord + CornerOffs[CrnrOffsIdxA[i]];
-					int3 coordB = coord + CornerOffs[CrnrOffsIdxB[i]];
-
-					sbyte valA = Volume[CoordToIndex(coordA)];
-					sbyte valB = Volume[CoordToIndex(coordB)];
-
-					bool crossing = valA < 0 != valB < 0;
-					if (crossing)
-					{
-						numCrossings++;
-
-						float fValA = valA / sbyteMax;
-						float fValB = valB / sbyteMax;
-						float t = fValA / (fValA - fValB);
-						posCoord += coordA + t * new float3(coordB - coordA);
-					}
-				}
-
-				if (numCrossings == 0) return;
-
-				posCoord /= numCrossings;
-
-				float3 pos = CoordToPos(posCoord);
-
-				UnsafeList<float3>* vertsUnsafe = Verts.ListData;
-				if (vertsUnsafe->m_length >= vertsUnsafe->Capacity) return;
-				int idx = Interlocked.Increment(ref vertsUnsafe->m_length) - 1;
-				if (vertsUnsafe->m_length >= vertsUnsafe->Capacity) return; // capacity exceeded
-				UnsafeUtility.WriteArrayElement(vertsUnsafe->Ptr, idx, pos);
-
-				VertCoords.AddNoResize(coord);
-				VertexIndices[threadIdx] = (uint)idx;
-			}
-
-			private int3 ThreadIndexToCoord(int i)
-			{
-				int3 c;
-				int3 s = VolumeSize;
-				c.x = i % s.x;
-				c.y = i / s.x % s.y;
-				c.z = i / (s.x * s.y);
-				return c;
-			}
-
-			private int CoordToIndex(int3 c)
-			{
-				int3 s = VolumeSize;
-				return c.x + c.y * s.x + c.z * s.x * s.y;
-			}
-
-			private float3 CoordToPos(float3 c)
-			{
-				return c * MetersPerVoxel + MetersPerVoxel / 2f;
-			}
-		}*/
 
 		[BurstCompile]
 		private struct IndexJob : IJob
 		{
-			[ReadOnly] public NativeArray<int3> VertCoords;
-			[ReadOnly] public NativeArray<uint> VertIndices;
-
 			[ReadOnly] public NativeArray<sbyte> Volume;
-			[ReadOnly] public int3 VolumeSize;
+
+			[ReadOnly] public int3 VoxCount;
+			[ReadOnly] public NativeList<int3> VertCoords;
+			[ReadOnly] public NativeArray<int> CoordVertMap;
 
 			public NativeList<uint> Tris;
 
 			public void Execute()
 			{
-				for (int i = 0; i < VertCoords.Length; i++)
+				foreach (int3 coord in VertCoords)
 				{
-					int3 coord = VertCoords[i];
-
-					if (coord.x == 0 || coord.y == 0 || coord.z == 0)
-						continue;
-
 					TrisForAxis(coord, X, Z, Y);
 					TrisForAxis(coord, Y, X, Z);
 					TrisForAxis(coord, Z, Y, X);
@@ -363,126 +214,188 @@ namespace Anaglyph.DepthKit
 
 			private void TrisForAxis(int3 coord, int3 axis, int3 d1, int3 d2)
 			{
-				int ia = CoordToIndex(coord);
+				if (math.any(coord - d1 < int3.zero)
+				    || math.any(coord - d2 < int3.zero))
+					return;
+
+				int ia = Flatten(coord);
 				float va = ValueForCoord(coord);
 				float vb = ValueForCoord(coord + axis);
 
 				if (va < 0 == vb < 0) return;
 
-				uint a = VertIndices[ia];
-				uint b = VertIndices[CoordToIndex(coord - d1)];
-				uint c = VertIndices[CoordToIndex(coord - (d1 + d2))];
-				uint d = VertIndices[CoordToIndex(coord - d2)];
+				int a = CoordVertMap[ia];
+				int b = CoordVertMap[Flatten(coord - d1)];
+				int c = CoordVertMap[Flatten(coord - (d1 + d2))];
+				int d = CoordVertMap[Flatten(coord - d2)];
 
-				if (a == uint.MaxValue || b == uint.MaxValue || c == uint.MaxValue || d == uint.MaxValue)
+				if (a == InvalidVertSentinel || b == InvalidVertSentinel || c == InvalidVertSentinel ||
+				    d == InvalidVertSentinel)
 					return;
-
-				Tris.Resize(Tris.Length + 6, NativeArrayOptions.ClearMemory);
 
 				if (va < 0)
 				{
-					Tris.AddNoResize(c);
-					Tris.AddNoResize(b);
-					Tris.AddNoResize(a);
-					Tris.AddNoResize(d);
-					Tris.AddNoResize(c);
-					Tris.AddNoResize(a);
+					AddTriangle(c, b, a);
+					AddTriangle(d, c, a);
 				}
 				else
 				{
-					Tris.AddNoResize(a);
-					Tris.AddNoResize(c);
-					Tris.AddNoResize(d);
-					Tris.AddNoResize(a);
-					Tris.AddNoResize(b);
-					Tris.AddNoResize(c);
+					AddTriangle(a, c, d);
+					AddTriangle(a, b, c);
 				}
 			}
 
-			private int CoordToIndex(int3 c)
+			private void AddTriangle(int a, int b, int c)
 			{
-				int3 s = VolumeSize;
-				return c.x + c.y * s.x + c.z * s.x * s.y;
+				Tris.AddNoResize((uint)a);
+				Tris.AddNoResize((uint)b);
+				Tris.AddNoResize((uint)c);
+			}
+
+			private int Flatten(int3 c)
+			{
+				return FlattenCoord(c, VoxCount);
 			}
 
 			private float ValueForCoord(int3 c)
 			{
-				return Volume[CoordToIndex(c)] / sbyteMax;
+				return Volume[Flatten(c)] / sbyteMax;
 			}
 		}
 
-		/*[BurstCompile]
-		private struct IndexJob : IJobFor
+		private static int FlattenCoord(int3 coord, int3 voxCount)
 		{
-			[ReadOnly] public NativeArray<int3> VertCoords;
-			[ReadOnly] public NativeArray<uint> VertIndices;
+			int3 c = coord;
+			int3 s = voxCount;
+			return c.x + c.y * s.x + c.z * s.x * s.y;
+		}
 
-			[ReadOnly] public NativeArray<sbyte> Volume;
-			[ReadOnly] public int3 VolumeSize;
+		public async Task<bool> CreateMesh(
+			NativeArray<sbyte> volume,
+			int3 voxCount, float voxSize, Mesh mesh,
+			CancellationToken ctkn = default)
+		{
+			if (isBusy) throw new Exception("Mesher is busy");
+			isBusy = true;
 
-			[WriteOnly] public NativeList<uint>.ParallelWriter Tris;
-
-			public void Execute(int threadIndex)
+			if (!verts.IsCreated)
 			{
-				int3 coord = VertCoords[threadIndex];
+				int vertCountEstimate = volume.Length / 3;
+				int triCountEstimate = vertCountEstimate * 6;
 
-				if (coord.x == 0 || coord.y == 0 || coord.z == 0)
-					return;
+				verts = new NativeList<Vertex>(vertCountEstimate, Allocator.Persistent);
+				vertCoords = new NativeList<int3>(vertCountEstimate, Allocator.Persistent);
+				tris = new NativeList<uint>(triCountEstimate, Allocator.Persistent);
+				boundsRef = new NativeReference<MinMaxAABB>(Allocator.Persistent);
 
-				TrisForAxis(coord, X, Z, Y);
-				TrisForAxis(coord, Y, X, Z);
-				TrisForAxis(coord, Z, Y, X);
+				coordVertMap = new NativeArray<int>(volume.Length, Allocator.Persistent);
 			}
 
-			private unsafe void TrisForAxis(int3 coord, int3 axis, int3 d1, int3 d2)
+			if (coordVertMap.IsCreated && coordVertMap.Length < volume.Length)
 			{
-				int ia = CoordToDataIndex(coord);
-				sbyte va = Volume[ia];
+				coordVertMap.Dispose();
+				coordVertMap = new NativeArray<int>(volume.Length, Allocator.Persistent);
+			}
 
-				int3 ca = coord + axis;
-				int ib = CoordToDataIndex(ca);
-				sbyte vb = Volume[ib];
+			verts.Clear();
+			vertCoords.Clear();
+			tris.Clear();
 
-				bool negA = va < 0;
-				bool negB = vb < 0;
+			boundsRef.Value = new MinMaxAABB();
 
-				if (negA == negB) return;
+			bool hasTriangles = false;
 
-				uint a = VertIndices[ia];
-				uint b = VertIndices[CoordToDataIndex(coord - d1)];
-				uint c = VertIndices[CoordToDataIndex(coord - (d1 + d2))];
-				uint d = VertIndices[CoordToDataIndex(coord - d2)];
-
-				UnsafeList<uint>* trisUnsafe = Tris.ListData;
-				if (trisUnsafe->m_length >= trisUnsafe->Capacity) return;
-				int idx = Interlocked.Add(ref trisUnsafe->m_length, 6) - 6;
-				if (trisUnsafe->m_length >= trisUnsafe->Capacity) return; // capacity exceeded
-
-				if (negA)
+			try
+			{
+				VertexJob vertexMaker = new()
 				{
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 0, c);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 1, b);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 2, a);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 3, d);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 4, c);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 5, a);
-				}
-				else
+					Volume = volume,
+					VoxCount = voxCount,
+					VoxSize = voxSize,
+
+					CoordVertMap = coordVertMap,
+					Verts = verts,
+					VertCoords = vertCoords,
+
+					BoundsRef = boundsRef
+				};
+
+				JobHandle vertHandle = vertexMaker.Schedule();
+				while (!vertHandle.IsCompleted) await Awaitable.NextFrameAsync(ctkn);
+
+				vertHandle.Complete();
+				ctkn.ThrowIfCancellationRequested();
+
+				if (verts.Length < 3)
+					return false;
+
+				IndexJob triMaker = new()
 				{
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 0, a);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 1, c);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 2, d);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 3, a);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 4, b);
-					UnsafeUtility.WriteArrayElement(trisUnsafe->Ptr, idx + 5, c);
-				}
+					VertCoords = vertCoords,
+					CoordVertMap = coordVertMap,
+
+					Volume = volume,
+					VoxCount = voxCount,
+					// Verts = verts,
+
+					Tris = tris
+				};
+
+				JobHandle triHandle = triMaker.Schedule();
+				while (!triHandle.IsCompleted) await Awaitable.NextFrameAsync(ctkn);
+
+				triHandle.Complete();
+				ctkn.ThrowIfCancellationRequested();
+
+				MinMaxAABB b = boundsRef.Value;
+
+				Bounds bounds = new(b.Center, b.Extents);
+				ApplyToMesh(verts.AsArray(), tris.AsArray(), bounds, mesh);
+
+				hasTriangles = tris.Length > 0;
+			}
+			finally
+			{
+				isBusy = false;
 			}
 
-			private int CoordToDataIndex(int3 c)
-			{
-				int3 s = VolumeSize;
-				return c.x + c.y * s.x + c.z * s.x * s.y;
-			}
-		}*/
+			return hasTriangles;
+		}
+
+		private static void ApplyToMesh(NativeArray<Vertex> verts, NativeArray<uint> tris,
+			Bounds bounds, Mesh mesh)
+		{
+			Mesh.MeshDataArray meshDataArray = Mesh.AllocateWritableMeshData(1);
+			Mesh.MeshData meshData = meshDataArray[0];
+
+			meshData.SetVertexBufferParams(verts.Length, Vertex.Layout);
+			meshData.SetIndexBufferParams(tris.Length, IndexFormat.UInt32);
+
+			NativeArray<Vertex> vb = meshData.GetVertexData<Vertex>();
+			vb.CopyFrom(verts);
+
+			NativeArray<uint> ib = meshData.GetIndexData<uint>();
+			ib.CopyFrom(tris);
+
+			const MeshUpdateFlags flags = MeshUpdateFlags.DontNotifyMeshUsers |
+			                              MeshUpdateFlags.DontRecalculateBounds |
+			                              MeshUpdateFlags.DontValidateIndices;
+			meshData.subMeshCount = 1;
+			meshData.SetSubMesh(0, new SubMeshDescriptor(0, tris.Length), flags);
+
+			Mesh.ApplyAndDisposeWritableMeshData(meshDataArray, mesh);
+
+			mesh.bounds = bounds;
+			mesh.MarkModified();
+		}
+
+		public void Dispose()
+		{
+			verts.Dispose();
+			vertCoords.Dispose();
+			coordVertMap.Dispose();
+			tris.Dispose();
+			boundsRef.Dispose();
+		}
 	}
 }

@@ -62,6 +62,8 @@ namespace Anaglyph.Lasertag
 					cam.cullingMask |= layerBit;
 				else
 					cam.cullingMask &= ~layerBit;
+
+				// ChunkManager.Instance.EnableDebugMaterial(b);
 			});
 
 			meshScanning.AddChangeListenerAndCheck(b =>
