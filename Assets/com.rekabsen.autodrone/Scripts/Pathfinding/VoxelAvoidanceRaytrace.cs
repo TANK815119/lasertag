@@ -39,6 +39,7 @@ namespace Rekabsen.AutoDrone
         [SerializeField] float proximalTick = 2.5f;
         [SerializeField] float distalTick = 15f;
         [SerializeField] float unstuckTick = 5f;
+		[SerializeField] int maxUnstuckAttempts = 3;
         [SerializeField] float lowVelocityTheshold = 0.1f;
         [SerializeField] float searchAreaCoefficient = 3f;
         [SerializeField] bool canDetonate = false;
@@ -59,7 +60,7 @@ namespace Rekabsen.AutoDrone
         private bool detonated = false;
         private float timer = 0f;
         private float unstuckTimer = 0f;
-        private int unStuckAttempts = 0;
+        private int unstuckAttempts = 0;
 
 		private MaterialPropertyBlock propertyBlock;
 		private Material lineMaterial;
@@ -186,24 +187,38 @@ namespace Rekabsen.AutoDrone
             {
 				unstuckTimer += Time.deltaTime;
 
-				if (unStuckAttempts > 5)
+				if (unstuckAttempts > maxUnstuckAttempts)
                 {
-                    detonated = true; //hard coded limit for unstuck attempts is 5
+                    detonated = true;
                 }
-                if (unstuckTimer > unstuckTick)
-                {
-
-					unStuckAttempts++;
+				if (unstuckTimer > unstuckTick)
+				{
+					Debug.Log("Unstuck procedure triggered");
+					drone.rotation = quaternion.identity;
+					unstuckAttempts++;
 					unstuckTimer = 0f;
 
+					// If the drone has a path, put into onto the next voxel
+					if (pathNodes != null && pathNodes.Count > 1)
+					{
+						drone.position = pathNodes[0].bounds.center;
+						drone.forward = poi.position - drone.position;
+					}
 				}
 
                 sighted = false;
             }
-            else
-            {
-                unStuckAttempts = 0;
-            }
+            else if (unstuckAttempts > 0)
+			{
+				unstuckTimer += Time.deltaTime;
+
+				if (unstuckTimer > unstuckTick)
+				{
+					Debug.Log("Resetting unstuck attempts");
+					unstuckAttempts = 0;
+					unstuckTimer = 0f;
+				}
+			}
         }
 
         private void AttemptProximityRecalculation()
@@ -642,7 +657,9 @@ namespace Rekabsen.AutoDrone
         public void SetPOI(Transform poiInput)
         {
             poi = poiInput;
-        }
+			listener.SetPOI(poi);
+			listener.OnCollision.AddListener(() => { detonated = true; }); //no cleanup necessary, since entire hierachy destroyed
+		}
 
         public void setPOIRange(float range)
         {
