@@ -6,7 +6,7 @@ namespace Rekabsen.AutoDrone
 {
     public class NonPlayerCharacter : MonoBehaviour
     {
-        [SerializeField] private float health;
+        [SerializeField] private float health = 100f;
         public List<Collider> Body { get; set; }
         // Start is called before the first frame update
         void Start()

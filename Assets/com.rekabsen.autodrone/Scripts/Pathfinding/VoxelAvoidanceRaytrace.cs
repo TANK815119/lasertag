@@ -661,6 +661,11 @@ namespace Rekabsen.AutoDrone
 			listener.OnCollision.AddListener(() => { detonated = true; }); //no cleanup necessary, since entire hierachy destroyed
 		}
 
+		public GameObject GetPOI()
+		{
+			return poi.gameObject;
+		}
+
         public void setPOIRange(float range)
         {
             poiRange = range;

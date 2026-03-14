@@ -4,53 +4,74 @@ using NUnit.Framework;
 using Rekabsen.AutoDrone;
 using UnityEngine;
 
-public class DroneSpawner : MonoBehaviour
+namespace Rekabsen.AutoDrone
 {
-	[SerializeField] private GameObject dronePrefab;
-	[SerializeField] private float droneSpawnInterval = 10f;
-	[SerializeField] private Transform poi;
-	private List<GameObject> spawnedDrones = new();
-
-	// Start is called once before the first execution of Update after the MonoBehaviour is created
-	void Start()
-    {
-		// For the purpose of not being in a wall, amke the spawn position the innitial head position
-		this.transform.position = poi.position;
-		DroneSpawnLoop();
-	}
-
-    private async void DroneSpawnLoop()
+	public class DroneSpawner : MonoBehaviour
 	{
-		while (enabled)
-		{
-			await Awaitable.WaitForSecondsAsync(droneSpawnInterval);
-			SpawnDrone();
-		}
-	}
+		[SerializeField] private GameObject dronePrefab;
+		[SerializeField] private GameObject droneMiniPrefab;
+		[SerializeField] private float droneSpawnInterval = 10f;
+		[SerializeField] private int maxDrones = 2;
+		[SerializeField] private Transform poi;
+		private List<GameObject> spawnedDrones = new();
 
-	private void SpawnDrone()
-	{
-		if (DroneCount() >= 3)
+		// Start is called once before the first execution of Update after the MonoBehaviour is created
+		void Start()
 		{
-			Debug.Log("Maximum drone count reached. Skipping spawn.");
-			return;
+			// For the purpose of not being in a wall, amke the spawn position the innitial head position
+			this.transform.position = poi.position;
+			DroneSpawnLoop();
 		}
 
-		GameObject drone = Instantiate(dronePrefab, transform.position, Quaternion.identity);
-		spawnedDrones.Add(drone);
-		if (drone.TryGetComponent(out VoxelAvoidanceRaytrace pathfinding))
+		private async void DroneSpawnLoop()
 		{
-			pathfinding.SetPOI(poi);
+			while (enabled)
+			{
+				await Awaitable.WaitForSecondsAsync(droneSpawnInterval);
+				SpawnDrone();
+			}
 		}
-		else
-		{
-			Debug.LogWarning("DroneSpawner is missing a VoxelAvoidanceRaytrace component for pathfinding.");
-		}
-	}
 
-	private int DroneCount()
-	{
-		spawnedDrones.RemoveAll(d => d == null); // Clean up destroyed drones
-		return spawnedDrones.Count;
+		private void SpawnDrone()
+		{
+			if (DroneCount() >= maxDrones)
+			{
+				Debug.Log("Maximum drone count reached. Skipping spawn.");
+				return;
+			}
+
+			// 50% chance to spawn a mini drone instead of a regular one
+			GameObject drone = null;
+			if (Random.value < 0.5f)
+			{
+				drone = Instantiate(dronePrefab, transform.position, Quaternion.identity);
+			}
+			else
+			{
+				drone = Instantiate(droneMiniPrefab, transform.position, Quaternion.identity);
+			}
+
+			if (drone == null)
+			{
+				Debug.LogError("Failed to spawn drone. Prefab might be missing.");
+				return;
+			}
+
+			spawnedDrones.Add(drone);
+			if (drone.TryGetComponent(out VoxelAvoidanceRaytrace pathfinding))
+			{
+				pathfinding.SetPOI(poi);
+			}
+			else
+			{
+				Debug.LogWarning("DroneSpawner is missing a VoxelAvoidanceRaytrace component for pathfinding.");
+			}
+		}
+
+		private int DroneCount()
+		{
+			spawnedDrones.RemoveAll(d => d == null); // Clean up destroyed drones
+			return spawnedDrones.Count;
+		}
 	}
 }

@@ -236,6 +236,7 @@ GameObject:
   m_Component:
   - component: {fileID: 9104708620743691876}
   - component: {fileID: -6273684118396164631}
+  - component: {fileID: -1139404387080591415}
   m_Layer: 0
   m_Name: NPC_Drone_Raycast
   m_TagString: Untagged
@@ -299,8 +300,23 @@ MonoBehaviour:
   lowVelocityTheshold: 0.5
   searchAreaCoefficient: 1.5
   canDetonate: 1
-  debugMesh: 1
+  debugMesh: 0
   droneBox: {fileID: 4582305102641892156}
+--- !u!114 &-1139404387080591415
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 262432743607595629}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0854391a861022e45942920ac4561e79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Rekabsen.AutoDrone.DroneRaycastCharacter
+  health: 250
+  voxelAvoidance: {fileID: -6273684118396164631}
+  impactForceMultiplier: 0.05
 --- !u!1 &304600988340691115
 GameObject:
   m_ObjectHideFlags: 0
