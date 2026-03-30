@@ -32,8 +32,9 @@ namespace Rekabsen.AutoDrone
         [SerializeField] private float damper = 0.15f;
         [SerializeField] private float maxYawOmega = 7f;
         [SerializeField] private float axesThrustAlotment = 5f;
+		[Range(0f, 1f)] [SerializeField] private float idealRotCoef = 1f;
 
-        private float idealLift;
+		private float idealLift;
         private float idealPitch;
         private float idealRoll;
         private float idealYawOmega;
@@ -149,8 +150,8 @@ namespace Rekabsen.AutoDrone
             }
 
             //modulate ideal yaw for ptich and roll to be within -90f and 90f so the drone doesnt flip
-            idealPitch = idealPitch * 90f;
-            idealRoll = idealRoll * 90f;
+            idealPitch = idealPitch * 90f * idealRotCoef;
+            idealRoll = idealRoll * 90f * idealRotCoef;
 
             idealYawOmega = idealYawOmega * maxYawOmega;
         }

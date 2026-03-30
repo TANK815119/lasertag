@@ -10,6 +10,7 @@ namespace Rekabsen.AutoDrone
 	{
 		[SerializeField] private GameObject dronePrefab;
 		[SerializeField] private GameObject droneMiniPrefab;
+		[SerializeField] private GameObject droneBlasterPrefab;
 		[SerializeField] private float droneSpawnInterval = 10f;
 		[SerializeField] private int maxDrones = 2;
 		[SerializeField] private Transform poi;
@@ -42,13 +43,18 @@ namespace Rekabsen.AutoDrone
 
 			// 50% chance to spawn a mini drone instead of a regular one
 			GameObject drone = null;
-			if (Random.value < 0.5f)
+			float random = Random.value;
+			if (random < 0.33f)
 			{
 				drone = Instantiate(dronePrefab, transform.position, Quaternion.identity);
 			}
-			else
+			else if (random < 0.66f)
 			{
 				drone = Instantiate(droneMiniPrefab, transform.position, Quaternion.identity);
+			}
+			else
+			{
+				drone = Instantiate(droneBlasterPrefab, transform.position, Quaternion.identity);
 			}
 
 			if (drone == null)
