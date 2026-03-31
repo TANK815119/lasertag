@@ -9,8 +9,10 @@ namespace Rekabsen.AutoDrone
     [RequireComponent(typeof(Collider))]
     public class WarheadListener : MonoBehaviour
     {
-        private List<Collider> validColliders;
-        private Transform POI;
+		[Tooltip("Explosed upon contact(along with any collider in POI)")]
+		[SerializeField] private string validTag = "Player";
+		private List<Collider> validColliders;
+		private Transform POI;
 
         public UnityEvent OnCollision;
 
@@ -70,10 +72,12 @@ namespace Rekabsen.AutoDrone
 
         private void OnTriggerEnter(Collider other)
         {
-            if (validColliders.Contains(other))
+            if (validColliders.Contains(other) || other.gameObject.CompareTag(validTag))
             {
-                OnCollision?.Invoke();
+				Debug.Log($"WarheadListener: Valid collision detected with {other.gameObject.name} having tag {other.gameObject.tag}. Invoking OnCollision event.");
+				OnCollision?.Invoke();
             }
-        }
+			//Debug.Log($"WarheadListener: Trigger entered by {other.gameObject.name} with tag {other.gameObject.tag}");
+		}
     }
 }

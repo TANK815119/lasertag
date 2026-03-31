@@ -358,7 +358,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DroneSpawner
   dronePrefab: {fileID: 262432743607595629, guid: c56227a40f06a0c4499478e86db84e95, type: 3}
-  droneMiniPrefab: {fileID: 2746172272209681331, guid: 98f17f7447876b54ca8dcffc0b218999, type: 3}
+  droneMiniPrefab: {fileID: 262432743607595629, guid: c56227a40f06a0c4499478e86db84e95, type: 3}
   droneBlasterPrefab: {fileID: 2746172272209681331, guid: 98f17f7447876b54ca8dcffc0b218999, type: 3}
   droneSpawnInterval: 10
   maxDrones: 2

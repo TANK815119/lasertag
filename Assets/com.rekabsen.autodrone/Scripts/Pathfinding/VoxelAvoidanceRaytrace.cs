@@ -160,10 +160,10 @@ namespace Rekabsen.AutoDrone
 
         private bool AttemptDetonation()
         {
-            if (Vector3.Distance(drone.position, poi.position) < superProximalDist && canDetonate)
-            {
-                detonated = true;
-            }
+            //if (Vector3.Distance(drone.position, poi.position) < superProximalDist && canDetonate && listener.enabled && canDetonate)
+            //{
+            //    detonated = true;
+            //}
 
             if (detonated)
             {
