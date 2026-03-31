@@ -43,7 +43,6 @@ namespace Rakebsen.Autodrone
 				boltEmitter.RotateAround(pivot.position, boltEmitter.parent.right, pitchError);
 				pitchIntegral += pitchError; // Integral updates should always be associated with an actual rotation, so only update if we rotate
 			}
-			Debug.Log($"Yaw Error: {yawError}, Pitch Error: {pitchError}, Yaw Integral: {yawIntegral}, Pitch Integral: {pitchIntegral}");
 
 			boltEmitter.localRotation = Quaternion.Euler(boltEmitter.localRotation.eulerAngles.x, boltEmitter.localRotation.eulerAngles.y, 0f); // Lock the z rotation to prevent roll
 

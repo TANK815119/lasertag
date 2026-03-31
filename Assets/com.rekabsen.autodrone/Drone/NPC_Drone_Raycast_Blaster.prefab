@@ -2602,7 +2602,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3948713306769814791}
-  - component: {fileID: 8127915518227333800}
   - component: {fileID: 2706551088382378219}
   m_Layer: 0
   m_Name: body
@@ -2628,36 +2627,6 @@ Transform:
   - {fileID: 4571639891289490863}
   m_Father: {fileID: 5973254731851754558}
   m_LocalEulerAnglesHint: {x: 80, y: 0, z: 0}
---- !u!114 &8127915518227333800
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5574045160448766350}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 05b75b37666bc1641a6395ce12df8258, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  fixedUpdatesPerFire: 5
-  boltPrefab: {fileID: 6335627118381249066, guid: adc581b48dccfb24ebccf6aaa9b8df75, type: 3}
-  emitFromTransform: {fileID: 5495086710073088277}
-  onFire:
-    m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 0}
-        m_TargetAssemblyTypeName: Anaglyph.Lasertag.Haptics.HapticPlayer, Lasertag.Haptics
-        m_MethodName: Play
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
 --- !u!114 &2706551088382378219
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2676,7 +2645,8 @@ MonoBehaviour:
   onFire:
     m_PersistentCalls:
       m_Calls: []
-  firing: 1
+  voxelAvoidanceRaytrace: {fileID: 4421876064117204097}
+  targetTag: Player
 --- !u!1 &5649637724084874167
 GameObject:
   m_ObjectHideFlags: 0

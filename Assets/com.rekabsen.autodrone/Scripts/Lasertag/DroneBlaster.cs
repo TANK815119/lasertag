@@ -1,4 +1,6 @@
+using System.Net.NetworkInformation;
 using Anaglyph.Lasertag.Logistics;
+using Rekabsen.AutoDrone;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.Events;
@@ -6,7 +8,7 @@ using UnityEngine.InputSystem;
 
 namespace Rakebsen.Autodrone
 {
-	public class LocalDroneBlaster : MonoBehaviour
+	public class DroneBlaster : MonoBehaviour
 	{
 		[SerializeField] private int fixedUpdatesPerFire = 5;
 		private int fixedUpdateTilNextFire = 0;
@@ -15,12 +17,26 @@ namespace Rakebsen.Autodrone
 		[SerializeField] private Transform emitFromTransform = null;
 		public UnityEvent onFire = new();
 
-		[SerializeField] private bool firing = true;
+		private bool firing;
+
+		[SerializeField] private VoxelAvoidanceRaytrace voxelAvoidanceRaytrace;
+		[SerializeField] private string targetTag = "Player";
 
 		private void FixedUpdate()
 		{
 			if (!NetworkManager.Singleton.IsConnectedClient)
 				return;
+
+			// Only fire if the blaster is aimed at the target
+			if (Physics.Raycast(emitFromTransform.transform.position, emitFromTransform.transform.forward, out RaycastHit hitInfo))
+			{
+				firing = hitInfo.collider.gameObject.CompareTag(targetTag);
+				//Debug.Log($"DroneBlaster: Raycast hit {hitInfo.collider.gameObject.name}, with tag {hitInfo.collider.tag}");
+			}
+			else
+			{
+				firing = false;
+			}
 
 			if (firing)
 			{
