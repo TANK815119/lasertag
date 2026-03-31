@@ -314,7 +314,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0854391a861022e45942920ac4561e79, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Rekabsen.AutoDrone.DroneRaycastCharacter
-  health: 200
+  health: 150
   voxelAvoidance: {fileID: -6273684118396164631}
   impactForceMultiplier: 0.05
 --- !u!1 &304600988340691115

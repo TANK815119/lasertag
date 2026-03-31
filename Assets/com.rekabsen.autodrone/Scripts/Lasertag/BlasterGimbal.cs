@@ -8,6 +8,9 @@ namespace Rakebsen.Autodrone
 		[SerializeField] private Transform boltEmitter;
 		[SerializeField] private Transform pivot;
 		[SerializeField] private VoxelAvoidanceRaytrace voxelAvoidance;
+		[SerializeField] private float maxGimbleDegree = 45f;
+		private float yawIntegral = 0f;
+		private float pitchIntegral = 0f;
 
 		// Start is called once before the first execution of Update after the MonoBehaviour is created
 		void Start()
@@ -29,8 +32,18 @@ namespace Rakebsen.Autodrone
 			float yawError = Vector3.SignedAngle(boltEmitter.forward, vector, boltEmitter.parent.up); //error in degrees - y-axis rotationally and horizontal in drone space
 			float pitchError = Vector3.SignedAngle(boltEmitter.forward, vector, boltEmitter.parent.right); //error in degrees - x-axis rotationally and vertical in drone space
 
-			boltEmitter.RotateAround(pivot.position, boltEmitter.parent.up, yawError);
-			boltEmitter.RotateAround(pivot.position, boltEmitter.parent.right, pitchError);
+			// Limit Rotation to a cone of maxGimbleDegree degrees
+			if (Mathf.Abs(yawIntegral + yawError) <= maxGimbleDegree)
+			{
+				boltEmitter.RotateAround(pivot.position, boltEmitter.parent.up, yawError);
+				yawIntegral += yawError; // Integral updates should always be associated with an actual rotation, so only update if we rotate
+			}
+			if (Mathf.Abs(pitchIntegral + pitchError) <= maxGimbleDegree)
+			{
+				boltEmitter.RotateAround(pivot.position, boltEmitter.parent.right, pitchError);
+				pitchIntegral += pitchError; // Integral updates should always be associated with an actual rotation, so only update if we rotate
+			}
+			Debug.Log($"Yaw Error: {yawError}, Pitch Error: {pitchError}, Yaw Integral: {yawIntegral}, Pitch Integral: {pitchIntegral}");
 
 			boltEmitter.localRotation = Quaternion.Euler(boltEmitter.localRotation.eulerAngles.x, boltEmitter.localRotation.eulerAngles.y, 0f); // Lock the z rotation to prevent roll
 
