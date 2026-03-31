@@ -2639,7 +2639,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c5dd1688755f4dd46992b36e1ae3f54f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::LocalDroneBlaster
-  fixedUpdatesPerFire: 5
+  fixedUpdatesPerFire: 10
   boltPrefab: {fileID: 6335627118381249066, guid: adc581b48dccfb24ebccf6aaa9b8df75, type: 3}
   emitFromTransform: {fileID: 5495086710073088277}
   onFire:
@@ -2647,6 +2647,7 @@ MonoBehaviour:
       m_Calls: []
   voxelAvoidanceRaytrace: {fileID: 4421876064117204097}
   targetTag: Player
+  shotVariance: 3
 --- !u!1 &5649637724084874167
 GameObject:
   m_ObjectHideFlags: 0

@@ -20,8 +20,8 @@ namespace Rakebsen.Autodrone
 			if (pivot == null) Debug.LogError("BlasterGimbal: No pivot assigned.");
 		}
 
-		// Update is called once per frame
-		void Update()
+		// FixedUpdate is necessary to make gimble variance consistent
+		void FixedUpdate()
 		{
 			// Find the vector from the pivot to the target and make the blaster look at it via the local x and y axis(not z)
 			Vector3 vector = voxelAvoidance.GetPOI().transform.position - pivot.position;

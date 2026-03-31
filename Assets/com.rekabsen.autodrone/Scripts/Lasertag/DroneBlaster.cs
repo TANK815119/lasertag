@@ -21,6 +21,7 @@ namespace Rakebsen.Autodrone
 
 		[SerializeField] private VoxelAvoidanceRaytrace voxelAvoidanceRaytrace;
 		[SerializeField] private string targetTag = "Player";
+		[SerializeField] [Tooltip("Max shot angle variance in degrees")] private float shotVariance = 5f; // Add some variance to the shot to prevent perfect accuracy
 
 		private void FixedUpdate()
 		{
@@ -67,6 +68,10 @@ namespace Rakebsen.Autodrone
 
 			NetworkObject n = NetworkObjectPool.Instance.GetNetworkObject(
 				boltPrefab, emitFromTransform.position, emitFromTransform.rotation);
+
+			n.transform.Rotate(Random.Range(-shotVariance, shotVariance),
+				Random.Range(-shotVariance, shotVariance),
+				Random.Range(-shotVariance, shotVariance));		
 
 			n.SpawnWithOwnership(NetworkManager.Singleton.LocalClientId);
 
